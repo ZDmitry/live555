@@ -3,3 +3,5 @@
 /[Bb]in
 /_[Bb]uild
 *.user
+.DS_Store
+

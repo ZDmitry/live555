@@ -19,6 +19,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 // Implementation
 
 #include "DynamicRTSPServer.hh"
+#include "MJpegMediaSubsession.hh"
 #include <liveMedia.hh>
 #include <string.h>
 
@@ -241,6 +242,11 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
     while ((smss = creationState.demux->newServerMediaSubsession()) != NULL) {
       sms->addSubsession(smss);
     }
+  } else if (strcmp(extension, ".jpeg") == 0 || strcmp(extension, ".jpg") == 0) {
+    // Assumed to be an Ogg file
+    NEW_SMS("Motion Jpeg Stream");
+
+    sms->addSubsession(MJpegMediaSubsession::createNew(env, fileName, reuseSource));
   }
 
   return sms;

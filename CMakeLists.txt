@@ -32,6 +32,12 @@ if(WIN32)
         set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
         set(CMAKE_DEBUG_POSTFIX d)
     endif()
+elseif(APPLE)
+    target_compile_definitions(live555_cxx_flags INTERFACE
+        BSD=1
+        SOCKLEN_T=socklen_t
+        NEWLOCALE_NOT_USED
+    )
 else()
     target_compile_definitions(live555_cxx_flags INTERFACE
         BSD=1
