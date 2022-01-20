@@ -35,17 +35,29 @@ DynamicRTSPServer::createNew(UsageEnvironment& env, Port ourPort,
 			       authDatabase, reclamationTestSeconds);
 }
 
+void DynamicRTSPServer::setupMediaSource(CustomMediaClient* mediaSource)
+{
+  _mediaSource = mediaSource;
+}
+
+CustomMediaClient* DynamicRTSPServer::mediaSource()
+{
+  return _mediaSource;
+}
+
 DynamicRTSPServer::DynamicRTSPServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6,
 				     Port ourPort,
 				     UserAuthenticationDatabase* authDatabase, unsigned reclamationTestSeconds)
-  : RTSPServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, authDatabase, reclamationTestSeconds) {
+  : RTSPServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, authDatabase, reclamationTestSeconds),
+    _mediaSource(NULL)
+{
+
 }
 
 DynamicRTSPServer::~DynamicRTSPServer() {
 }
 
-static ServerMediaSession* createNewSMS(UsageEnvironment& env,
-					char const* fileName, FILE* fid); // forward
+static ServerMediaSession* createNewSMS(DynamicRTSPServer* rtsp, UsageEnvironment& env, char const* fileName, FILE* fid); // forward
 
 void DynamicRTSPServer
 ::lookupServerMediaSession(char const* streamName,
@@ -61,14 +73,14 @@ void DynamicRTSPServer
   Boolean const smsExists = sms != NULL;
 
   // Handle the four possibilities for "fileExists" and "smsExists":
-  if (!fileExists) {
-    if (smsExists) {
-      // "sms" was created for a file that no longer exists. Remove it:
-      removeServerMediaSession(sms);
-    }
+  // if (!fileExists) {
+  //   if (smsExists) {
+  //     // "sms" was created for a file that no longer exists. Remove it:
+  //     removeServerMediaSession(sms);
+  //   }
 
-    sms = NULL;
-  } else {
+  //   sms = NULL;
+  // } else {
     if (smsExists && isFirstLookupInSession) { 
       // Remove the existing "ServerMediaSession" and create a new one, in case the underlying
       // file has changed in some way:
@@ -77,12 +89,12 @@ void DynamicRTSPServer
     } 
 
     if (sms == NULL) {
-      sms = createNewSMS(envir(), streamName, fid); 
+      sms = createNewSMS(this, envir(), streamName, fid); 
       addServerMediaSession(sms);
     }
 
-    fclose(fid);
-  }
+  //  fclose(fid);
+  // }
 
   if (completionFunc != NULL) {
     (*completionFunc)(completionClientData, sms);
@@ -119,8 +131,7 @@ char const* descStr = description\
 sms = ServerMediaSession::createNew(env, fileName, fileName, descStr);\
 } while(0)
 
-static ServerMediaSession* createNewSMS(UsageEnvironment& env,
-					char const* fileName, FILE* /*fid*/) {
+static ServerMediaSession* createNewSMS(DynamicRTSPServer* rtsp, UsageEnvironment& env, char const* fileName, FILE* /*fid*/) {
   // Use the file name extension to determine the type of "ServerMediaSession":
   char const* extension = strrchr(fileName, '.');
   if (extension == NULL) return NULL;
@@ -246,7 +257,10 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
     // Assumed to be an Ogg file
     NEW_SMS("Motion Jpeg Stream");
 
-    sms->addSubsession(MJpegMediaSubsession::createNew(env, fileName, reuseSource));
+    // First, make sure that the RTPSinks' buffers will be large enough to handle the huge size of DV frames (as big as 288000).
+    OutPacketBuffer::increaseMaxSizeTo(800000);
+
+    sms->addSubsession(MJpegMediaSubsession::createNew(env, rtsp->mediaSource(), reuseSource));
   }
 
   return sms;

@@ -4,13 +4,13 @@
 
 
 MJpegMediaSubsession*
-MJpegMediaSubsession::createNew(UsageEnvironment& env, const char* fileName, Boolean reuseFirstSource)
+MJpegMediaSubsession::createNew(UsageEnvironment& env, CustomMediaClient* source, Boolean reuseFirstSource)
 {
-    return new MJpegMediaSubsession(env, fileName, reuseFirstSource);
+    return new MJpegMediaSubsession(env, source, reuseFirstSource);
 }
 
-MJpegMediaSubsession::MJpegMediaSubsession(UsageEnvironment& env, const char* fileName, Boolean reuseFirstSource)
-  : FileServerMediaSubsession(env, fileName, reuseFirstSource)
+MJpegMediaSubsession::MJpegMediaSubsession(UsageEnvironment& env, CustomMediaClient* source, Boolean reuseFirstSource)
+  : FileServerMediaSubsession(env, "> Motion JPEG", reuseFirstSource), fMediaSource(source)
 {
 
 }
@@ -34,7 +34,7 @@ FramedSource*
 MJpegMediaSubsession::createNewStreamSource(unsigned clientSessionId, unsigned& estBitrate)
 {
     MJPEGVideoSource* frameSource = MJPEGVideoSource::createNew(envir(), 30);
-    frameSource->feedFrameData(fFileName);
+    frameSource->setupMediaSource(fMediaSource);
     return frameSource;
 }
 

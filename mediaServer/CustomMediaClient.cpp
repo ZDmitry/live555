@@ -2,6 +2,10 @@
 #include <GroupsockHelper.hh>
 #include <RTSPCommon.hh>
 
+#ifndef ZeroMemory
+#define ZeroMemory bzero
+#endif
+
 
 CustomMediaClient*
 CustomMediaClient::createNew(UsageEnvironment& env, const char* rtspURL, int verbosityLevel, const char* applicationName, portNumBits tunnelOverHTTPPortNum, int socketNumToServer)
@@ -125,8 +129,8 @@ Boolean CustomMediaClient::parseRTSPURL(const char* url, char*& username, char*&
 }
 
 CustomMediaClient::CustomMediaClient(UsageEnvironment &env, const char* rtspURL, int verbosityLevel, const char* applicationName, portNumBits tunnelOverHTTPPortNum, int socketNumToServer)
-  : Medium(env), fRTPInterface(NULL), fRTPgs(NULL), fBaseURL(NULL), fAreDoingNetworkReads(False), fPacketReadInProgress(NULL)
-    // , verbosityLevel, applicationName, tunnelOverHTTPPortNum, socketNumToServer)
+  : Medium(env), fRTPInterface(NULL), fRTPgs(NULL), fBaseURL(NULL), fFrameIndex(-1), fFrameBuffer(NULL), fFrameHead(0), fFrameTail(0),
+    _frameQueue(new std::deque<_custom_frame>()), fPacketReadInProgress(NULL), fAreDoingNetworkReads(False)
 {
     fBaseURL = strDup(rtspURL);
 }
@@ -146,11 +150,42 @@ CustomMediaClient::~CustomMediaClient()
         delete[] fBaseURL;
     }
 
+    if (_frameQueue) {
+      for (_custom_frame& frame: (*_frameQueue)) {
+        delete[] frame.data;
+      }
+      _frameQueue->clear();
+      delete _frameQueue;
+    }
+
+    if (fFrameBuffer) {
+      delete[] fFrameBuffer;
+    }
+
     if (fPacketReadInProgress) {
         delete fPacketReadInProgress;
     }
 }
 
+void CustomMediaClient::enqueueFrame(_custom_frame frame)
+{
+  if (frame.data && _frameQueue->size() < 300) {
+    _frameQueue->push_back(frame);
+  } else if (frame.data) {
+    // Drop frame
+    delete[] frame.data;
+  }
+}
+
+_custom_frame CustomMediaClient::dequeueFrame()
+{
+  if (_frameQueue->size()) {
+    _custom_frame frame = _frameQueue->front();
+    _frameQueue->pop_front();
+    return frame;
+  }
+  return _custom_frame { nullptr, 0 };
+}
 
 Boolean CustomMediaClient::connectToServer()
 {
@@ -169,7 +204,7 @@ Boolean CustomMediaClient::connectToServer()
     const unsigned char ttl = 255;
 
     struct sockaddr_storage servaddr;
-    bzero(&servaddr, sizeof(servaddr));
+    ZeroMemory(&servaddr, sizeof(servaddr));
 
     copyAddress(servaddr, &destAddress);
     setPortNum(servaddr, htons(urlPortNum));
@@ -179,30 +214,8 @@ Boolean CustomMediaClient::connectToServer()
 
     fRTPInterface = new RTPInterface(this, fRTPgs);
 
-    if (connect(fRTPgs->socketNum(), (struct sockaddr*)&servaddr, addressSize(servaddr)) != 0) {
-      int const err = envir().getErrno();
-      if (err == EINPROGRESS || err == EWOULDBLOCK) {
-        // The connection is pending; we'll need to handle it later.  Wait for our socket to be 'writable', or have an exception.
-        return 0;
-      }
-      envir().setResultErrMsg("connect() failed: ");
-      return False;
-    }
-
     // Try to use a big receive buffer for RTP:
     increaseReceiveBufferTo(envir(), fRTPgs->socketNum(), 50*1024);
-
-    size_t bufferSize = 255;
-    char* buffer = new char[bufferSize];
-
-    struct sockaddr_storage fromAddress;
-    bzero(&servaddr, sizeof(servaddr));
-
-    SOCKLEN_T addressSize = sizeof fromAddress;
-
-    int bytesRead = recvfrom(fRTPgs->socketNum(), (char*)buffer, bufferSize, 0,
-                 (struct sockaddr*)&fromAddress,
-                 &addressSize);
 
     if (!fAreDoingNetworkReads) {
       // Turn on background read handling of incoming packets:
@@ -271,12 +284,74 @@ void CustomMediaClient::asyncNetworkReadHandler()
     // If we didn't get proper data this time, we'll get another chance
 }
 
+u_int8_t readByte(BufferedPacket* packet) {
+  u_int8_t data = *(u_int8_t*)(packet->data());
+  packet->skip(1);
+  return data;
+}
+
+u_int16_t readWord(BufferedPacket* packet) {
+  u_int16_t data = *(u_int16_t*)(packet->data());
+  packet->skip(2);
+  return data;
+}
+
+u_int32_t readInt(BufferedPacket* packet) {
+  u_int32_t data = *(u_int32_t*)(packet->data());
+  packet->skip(4);
+  return data;
+}
+
+u_int8_t* readData(BufferedPacket* packet, size_t n) {
+  u_int8_t* data = new u_int8_t[n];
+  memcpy(data, packet->data(), n);
+  return data;
+}
+
 void CustomMediaClient::processNetworkPacket(BufferedPacket* packet)
 {
+    if (!packet || packet->dataSize() < 12) return;
 
-    if (!packet || packet->dataSize() == 0) return;
-    envir() << "Recvd packet:"
-            << (char const*)packet->data()
-            << "\n";
-    fflush(stderr);
+    // ntohl(*(u_int32_t*)(packet->data())); 
+
+    int _meta = readWord(packet);
+
+    int _frameI = (int)readInt(packet);
+    int _length = (int)readInt(packet);
+    int _offset = (int)readInt(packet);
+
+    if (fFrameIndex != _frameI) {
+      if (fFrameBuffer) {
+        // Full frame ??
+        if (fFrameHead == fFrameTail) {
+          enqueueFrame({ fFrameBuffer, fFrameTail });
+        } else {
+          // Just drop frame
+          delete[] fFrameBuffer;
+        }
+      }
+
+      fFrameIndex  = _frameI;
+      fFrameBuffer = new char[_length];
+
+      fFrameHead = 0;
+      fFrameTail = _length;
+    }
+
+    if (_offset >= fFrameHead && fFrameHead != fFrameTail) {
+      memcpy(&fFrameBuffer[fFrameHead], packet->data(), packet->dataSize());
+      fFrameHead += packet->dataSize();
+
+      if (fFrameHead == fFrameTail) {
+        enqueueFrame({ fFrameBuffer, fFrameTail });
+        fFrameBuffer = nullptr;
+      }
+
+      //envir() << "Recvd packet [ " << _frameI << "] = " 
+      //        << packet->dataSize() << "\n"
+      //        << "  Offset = " << _offset << "\n"
+      //        << "  Length = " << _length << "\n";
+    }
+
+    // fflush(stderr);
 }

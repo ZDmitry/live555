@@ -3,15 +3,19 @@
 
 #include <FileServerMediaSubsession.hh>
 
+#ifndef _CUSTOM_MEDIA_CLIENT_HH
+#include "CustomMediaClient.hh"
+#endif
+
 
 class MJpegMediaSubsession: public FileServerMediaSubsession
 {
 public:
   static MJpegMediaSubsession*
-  createNew(UsageEnvironment& env, char const* fileName, Boolean reuseFirstSource);
+  createNew(UsageEnvironment& env, CustomMediaClient* source, Boolean reuseFirstSource);
 
 private:
-  MJpegMediaSubsession(UsageEnvironment& env, char const* fileName, Boolean reuseFirstSource);
+  MJpegMediaSubsession(UsageEnvironment& env, CustomMediaClient* source, Boolean reuseFirstSource);
   virtual ~MJpegMediaSubsession();
 
 private: // redefined virtual functions
@@ -25,6 +29,7 @@ private: // redefined virtual functions
 private:
   float fFileDuration; // in seconds
 
+  CustomMediaClient* fMediaSource;
 };
 
 #endif // MJPEGMEDIASUBSESSION_H

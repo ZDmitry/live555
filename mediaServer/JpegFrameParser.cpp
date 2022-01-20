@@ -2,8 +2,10 @@
 #include <string.h>
 
 #ifndef NDEBUG
-    #include <stdio.h>
-    #define LOGGY(format, ...) fprintf (stderr, format, ##__VA_ARGS__)
+  #include <stdio.h>
+  #define LOGGY(format, ...) fprintf (stderr, format, ##__VA_ARGS__)
+#else
+  #define LOGGY(format, ...)
 #endif /* NDEBUG */
 
 
@@ -98,11 +100,11 @@ int JpegFrameParser::readSOF(const unsigned char* data, unsigned int size,
     width = data[off + 2] << 8 | data[off + 3];
     off += 4;
 
-    if (height == 0 || height > 2040) goto invalid_dimension;
-    if (width == 0 || width > 2040) goto invalid_dimension;
+    if (height == 0 /* || height > 2040 */) goto invalid_dimension;
+    if (width  == 0 /* || width  > 2040 */) goto invalid_dimension;
 
-    _width = width / 8;
-    _height = height / 8;
+    _width  = (width  > 2040) ? 0 : width  / 8;
+    _height = (height > 2040) ? 0 : height / 8;
 
     /* we only support 3 components */
     if (data[off++] != 3) goto bad_components;
@@ -324,7 +326,7 @@ int JpegFrameParser::parse(unsigned char* data, unsigned int size)
     }
 
     if (_width == 0 || _height == 0) {
-        goto no_dimension;
+        // goto no_dimension;
     }
 
     _scandata = data + jpeg_header_size;

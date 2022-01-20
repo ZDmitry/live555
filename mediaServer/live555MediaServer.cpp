@@ -28,7 +28,7 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include <GroupsockHelper.hh> // for "weHaveAnIPv*Address()"
 
 
-RTSPServer* setupRTSPServer(UsageEnvironment* env) {
+RTSPServer* setupRTSPServer(UsageEnvironment* env, portNumBits rtspPort) {
     UserAuthenticationDatabase* authDB = NULL;
 
   #ifdef ACCESS_CONTROL
@@ -39,14 +39,7 @@ RTSPServer* setupRTSPServer(UsageEnvironment* env) {
     // access to the server.
   #endif
 
-    RTSPServer* rtspServer;
-    portNumBits rtspServerPortNum = 554;
-    rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB);
-    if (rtspServer == NULL) {
-      rtspServerPortNum = 8554;
-      rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB);
-    }
-    return rtspServer;
+    return DynamicRTSPServer::createNew(*env, rtspPort, authDB);
 }
 
 void printHelloMessage(UsageEnvironment* env, RTSPServer* rtspServer) {
@@ -62,6 +55,8 @@ void printHelloMessage(UsageEnvironment* env, RTSPServer* rtspServer) {
       *env << "\t" << rtspURLPrefix << "<filename>\n";
       delete[] rtspURLPrefix;
     }
+
+    return;
 
     *env << "where <filename> is a file present in the current directory.\n";
 
@@ -95,6 +90,15 @@ void printHelloMessage(UsageEnvironment* env, RTSPServer* rtspServer) {
     }
 }
 
+char* readArgParams(int argc, char** argv, char const* param) {
+  for (int i = 0; i < argc; i++) {
+    if (strcmp(argv[i], param) == 0 && (i+1) < argc) {
+      return argv[i + 1];
+    }
+  }
+  return nullptr;
+}
+
 int main(int argc, char** argv) {
   // Begin by setting up our usage environment:
 #if defined(HAVE_EPOLL_SCHEDULER)
@@ -106,29 +110,40 @@ int main(int argc, char** argv) {
 
   // Create the RTSP server.  Try first with the default port number (554),
   // and then with the alternative port number (8554):
-  RTSPServer* rtspServer = NULL; // setupRTSPServer(env);
-  if (rtspServer == NULL) {
-    // *env << "Failed to create RTSP server: " << env->getResultMsg() << "\n";
-    // exit(1);
+
+  portNumBits rtspPort = 554 /* default */;
+
+  char const* portNum = readArgParams(argc, argv, "--port");
+  if (portNum) {
+    int port = atoi(portNum);
+    if (errno != EINVAL && errno != ERANGE && port > 0) {
+      rtspPort = port;
+    }
   }
 
-  CustomMediaClient* mediaServer = CustomMediaClient::createNew(*env, "rtsp://127.0.0.1:3002");
-  if (mediaServer == NULL) {
+  RTSPServer* rtspServer = setupRTSPServer(env, rtspPort);
+  if (rtspServer == NULL) {
+    *env << "Failed to create RTSP server: " << env->getResultMsg() << "\n";
+    exit(1);
+  }
+
+  char const* listenStream = "rtsp://127.0.0.1:3334";
+
+  char const* listen = readArgParams(argc, argv, "--listen");
+  if (listen && strlen(listen) >= 7 && strncmp(listen, "rtsp://", 7) == 0) {
+    listenStream = listen;
+  }
+
+  CustomMediaClient* mediaServer = CustomMediaClient::createNew(*env, listenStream);
+  if (mediaServer == NULL || !mediaServer->connectToServer()) {
     *env << "Failed to create Media server: " << env->getResultMsg() << "\n";
     exit(1);
   }
 
-  *env << "LIVE555 Media Server\n";
-  *env << "\tversion " << MEDIA_SERVER_VERSION_STRING
-       << " (LIVE555 Streaming Media library version "
-       << LIVEMEDIA_LIBRARY_VERSION_STRING << ").\n";
+  DynamicRTSPServer* rtsp = (DynamicRTSPServer*)rtspServer;
+  rtsp->setupMediaSource(mediaServer);
 
-  if (!mediaServer->connectToServer()) {
-      *env << "Failed to create Media server: " << env->getResultMsg() << "\n";
-      exit(1);
-  }
-
-  // printHelloMessage(env, rtspServer);
+  printHelloMessage(env, rtspServer);
 
   env->taskScheduler().doEventLoop(); // does not return
   return 0; // only to prevent compiler warning

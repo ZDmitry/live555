@@ -4,14 +4,18 @@
 #include <JPEGVideoSource.hh>
 #include "JpegFrameParser.hh"
 
+#ifndef _CUSTOM_MEDIA_CLIENT_HH
+#include "CustomMediaClient.hh"
+#endif
+
+
 class MJPEGVideoSource : public JPEGVideoSource
 {
 public:
   static MJPEGVideoSource*
   createNew(UsageEnvironment& env, unsigned timePerFrame);
 
-  void feedFrameData(const char* fileName);
-  void feedFrameData(const u_int8_t* data, size_t len);
+  void setupMediaSource(CustomMediaClient* source);
 
 protected:
   virtual u_int8_t type();
@@ -38,7 +42,8 @@ private:
   unsigned _timePerFrame;
   unsigned _bytesToRead;
 
-  JpegFrameParser* _jpeg;
+  JpegFrameParser*   _jpeg;
+  CustomMediaClient* _media;
 
   u_int8_t* _frameData;
   u_int8_t* _sourcePtr;

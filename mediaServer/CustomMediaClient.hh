@@ -4,6 +4,12 @@
 #include <RTSPClient.hh>
 #include <MultiFramedRTPSource.hh>
 
+#include <deque>
+
+struct _custom_frame {
+  char*  data;
+  size_t size;
+};
 
 class CustomMediaClient: public Medium {
 public:
@@ -18,12 +24,16 @@ public:
       // Parses "url" as "rtsp://[<username>[:<password>]@]<server-address-or-name>[:<port>][/<stream-name>]"
       // (Note that the returned "username" and "password" are either NULL, or heap-allocated strings that the caller must later delete[].)
 
+  _custom_frame dequeueFrame();
+
   virtual Boolean connectToServer();
 
 protected:
   CustomMediaClient(UsageEnvironment& env, char const* rtspURL,
          int verbosityLevel, char const* applicationName, portNumBits tunnelOverHTTPPortNum, int socketNumToServer);
   virtual ~CustomMediaClient();
+
+  void enqueueFrame(_custom_frame frame);
 
 private:
   // Support for asynchronous connections to the server:
@@ -40,6 +50,14 @@ private:
 
   Groupsock*    fRTPgs;
   char*         fBaseURL;
+
+  int     fFrameIndex;
+  char*   fFrameBuffer;
+
+  unsigned  fFrameHead;
+  unsigned  fFrameTail;
+
+  std::deque<_custom_frame>* _frameQueue;
 
   BufferedPacket* fPacketReadInProgress;
   Boolean fAreDoingNetworkReads;

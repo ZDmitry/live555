@@ -1,4 +1,6 @@
 #include "MJpegMediaSource.hh"
+
+#include <GroupsockHelper.hh>
 #include <InputFile.hh>
 #include <algorithm>
 
@@ -9,39 +11,9 @@ MJPEGVideoSource::createNew(UsageEnvironment& env, unsigned timePerFrame)
     return new MJPEGVideoSource(env, timePerFrame);
 }
 
-void MJPEGVideoSource::feedFrameData(const char* fileName)
+void MJPEGVideoSource::setupMediaSource(CustomMediaClient* source)
 {
-    FILE* fid = OpenInputFile(envir(), fileName);
-    if (fid) {
-        // Medium::close(newSource);
-        u_int64_t fsize = GetFileSize(fileName, fid);
-
-        const u_int8_t* fdata = new u_int8_t[fsize];
-
-        SeekFile64(fid, 0L, SEEK_SET);
-        fread((void*)fdata, sizeof(u_int8_t), fsize, fid);
-
-        CloseInputFile(fid);
-
-        feedFrameData(fdata, (size_t)fsize);
-
-        delete[] fdata;
-    }
-}
-
-void MJPEGVideoSource::feedFrameData(const u_int8_t* data, size_t len)
-{
-    if (!_frameData || _frameSize != len) {
-        if (_frameData) delete[] _frameData;
-        _frameData = new u_int8_t[len];
-    }
-
-    memcpy(_frameData, data, len);
-    _frameSize = len;
-
-    if(_jpeg->parse(_frameData, _frameSize) == 0) { // successful parsing
-        _sourcePtr = (unsigned char*)_jpeg->scandata(_bytesToRead);
-    }
+  _media = source;
 }
 
 u_int8_t MJPEGVideoSource::type()
@@ -76,12 +48,10 @@ u_int16_t MJPEGVideoSource::restartInterval()
     return (u_int16_t)_jpeg->restartInterval();
 }
 
+
 void MJPEGVideoSource::doGetNextFrame()
 {
-    // Try to read as many bytes as will fit in the buffer provided (or "fPreferredFrameSize" if less)
-    if (_bytesToRead < fMaxSize) {
-      fMaxSize = _bytesToRead;
-    }
+    fDurationInMicroseconds = 1000000 / _timePerFrame;
 
     // Set the 'presentation time' and 'duration' of this frame:
     if (fPresentationTime.tv_sec == 0 && fPresentationTime.tv_usec == 0) {
@@ -89,19 +59,25 @@ void MJPEGVideoSource::doGetNextFrame()
       gettimeofday(&fPresentationTime, NULL);
     } else {
       // Increment by the play time of the previous data:
-      unsigned uSeconds = fPresentationTime.tv_usec + _lastPlayTime;
+      unsigned uSeconds = fPresentationTime.tv_usec + fDurationInMicroseconds;
       fPresentationTime.tv_sec  += uSeconds / 1000000;
       fPresentationTime.tv_usec  = uSeconds % 1000000;
     }
 
-    fDurationInMicroseconds = _lastPlayTime
-        = (_lastPlayTime + _timePerFrame * 1000);
+    _custom_frame frame = _media->dequeueFrame();
+    if (frame.data && frame.size) {
+      if (_frameData) delete[] _frameData;
+      _frameData = (u_int8_t*)frame.data;
+      _frameSize = frame.size;
+      _bytesToRead = _frameSize;
+    }
 
-    unsigned numBytesRead = 0;
-    if (_sourcePtr && _bytesToRead > 0) {
-        memcpy(fTo, _sourcePtr, _bytesToRead);
-        numBytesRead = fMaxSize;
-        fFrameSize = _bytesToRead;
+    if(_bytesToRead > fMaxSize) {
+      fprintf(stderr, "WebcamJPEGDeviceSource::doGetNextFrame(): read maximum buffer size: %d bytes.  Frame may be truncated\n", fMaxSize);
+    }
+
+    if (_frameData && _frameSize > 0) {
+      fFrameSize = fillFrameData(fTo, _frameData, (std::min)(_bytesToRead, fMaxSize));
     }
 
     // fFrameSize += numBytesRead;
@@ -110,20 +86,20 @@ void MJPEGVideoSource::doGetNextFrame()
     // _sourcePtr += numBytesRead;
     // _bytesToRead -= numBytesRead;
 
-    if (_bytesToRead == 0) {
-        _sourcePtr = (unsigned char*)_jpeg->scandata(_bytesToRead);
-    }
-
     // Switch to another task, and inform the reader that he has data:
     nextTask() = envir().taskScheduler().scheduleDelayedTask(0, (TaskFunc*)FramedSource::afterGetting, this);
 }
 
-size_t MJPEGVideoSource::fillFrameData(void *pto, void *pfrom, size_t len)
+size_t MJPEGVideoSource::fillFrameData(void* pto, void* pfrom, size_t len)
 {
+    unsigned char* dest   = (unsigned char*)pto;
+    unsigned char* source = (unsigned char*)pfrom;
+
     unsigned int  jpegDataLen;
     unsigned char const* jpegData;
-    if(_jpeg->parse((unsigned char*)_frameData, _frameSize) == 0) { // successful parsing
+    if(_jpeg->parse(source, len) == 0) { // successful parsing
         jpegData = _jpeg->scandata(jpegDataLen);
+        memcpy(dest, jpegData, jpegDataLen);
         return jpegDataLen;
     }
     return 0;

@@ -25,11 +25,18 @@ along with this library; if not, write to the Free Software Foundation, Inc.,
 #include "RTSPServer.hh"
 #endif
 
+#ifndef _CUSTOM_MEDIA_CLIENT_HH
+#include "CustomMediaClient.hh"
+#endif
+
 class DynamicRTSPServer: public RTSPServer {
 public:
   static DynamicRTSPServer* createNew(UsageEnvironment& env, Port ourPort,
 				      UserAuthenticationDatabase* authDatabase,
 				      unsigned reclamationTestSeconds = 65);
+
+	void setupMediaSource(CustomMediaClient* mediaSource);
+	CustomMediaClient* mediaSource();
 
 protected:
   DynamicRTSPServer(UsageEnvironment& env, int ourSocketIPv4, int ourSocketIPv6, Port ourPort,
@@ -42,6 +49,10 @@ protected: // redefined virtual functions
 					lookupServerMediaSessionCompletionFunc* completionFunc,
 					void* completionClientData,
 					Boolean isFirstLookupInSession);
+
+private:
+	CustomMediaClient* _mediaSource;
+
 };
 
 #endif
